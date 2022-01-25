@@ -13,8 +13,10 @@ app.displayDialogs = DialogModes.NO;
 
 // VARIABLES
 
-var folderPSD, filesPSD, dir_Masks, lyr_Adj;
+var folderPSD, filesPSD, dir_Masks, lyr_Group1;
 var saveJPGs = [];
+var groupOrder = 0;
+var bridgeRun = true;
 var processedFiles = 0;
 var d, timeStart;
 var errorLog = ["Error log:\n"];
@@ -34,10 +36,14 @@ function init() {
     
     app.bringToFront();
 
-    if (app.documents.length != 0) return alert("Please close any open documents before continuing");
+    // if (app.documents.length != 0) return alert("Please close any open documents before continuing");
 
     filesPSD = GetFilesFromBridge();
-    if (filesPSD.length == 0) throw new Error("No recognisable files selected");
+    if (filesPSD.length == 0) {
+        if (app.documents.length == 0) throw new Error("No documents open or opened thru Bridge.");
+        filesPSD = [activeDocument];
+        bridgeRun = false;
+    }
     folderPSD = filesPSD[0].path;
 
     main();
@@ -53,59 +59,41 @@ function main() {
         try {
 
             saveJPGs = []; // TODO: Contact sheet of all saved jpgs
-            open(filesPSD[i]);
+            groupOrder = 0;
+            if (bridgeRun) open(filesPSD[i]);
         
-            if (activeDocument.layers.getByName("Adj").typename == "LayerSet") {
-                lyr_Adj = activeDocument.layers.getByName("Adj");
-            } else if (activeDocument.layers.getByName("adj").typename == "LayerSet") {
-                lyr_Adj = activeDocument.layers.getByName("adj");
-            } else if (activeDocument.layers.getByName("ADJ").typename == "LayerSet") {
-                lyr_Adj = activeDocument.layers.getByName("ADJ");
+            if (activeDocument.layers.getByName("Group 1").typename == "LayerSet") {
+                lyr_Group1 = activeDocument.layers.getByName("Group 1");
             } else {
-                throw new Error("The \"Adj\" group was not found.");
+                throw new Error("The \"Group 1\" group was not found.");
             }
 
             dir_Masks = new Folder(folderPSD + "/MaskCheck");
             if (!dir_Masks.exists) dir_Masks.create();
-            saveAsJPG(dir_Masks, activeDocument.name.substring(0, activeDocument.name.lastIndexOf(".")) + "_0");
+            saveAsJPG(dir_Masks, activeDocument.name.substring(0, activeDocument.name.lastIndexOf(".")) + "_" + groupOrder);
+            groupOrder++;
 
-            activeDocument.activeLayer = lyr_Adj;
-            if (enterMask()) {
-                activeDocument.selection.selectAll();
-                activeDocument.selection.copy();
-                activeDocument.selection.deselect();
-                exitMask();
-                app.documents.add(activeDocument.width.value, activeDocument.height.value, activeDocument.resolution, activeDocument.name.substring(0, activeDocument.name.lastIndexOf(".")) + "_" + activeDocument.activeLayer.name.replace(/ /g, '-'), NewDocumentMode.RGB, DocumentFill.WHITE, 1)
-                activeDocument.paste();
-                activeDocument.flatten();
-                var savedFile = saveAsJPG(dir_Masks, activeDocument.name);
-                saveJPGs.push(savedFile);
-                activeDocument.close(SaveOptions.DONOTSAVECHANGES);
-            };
+            activeDocument.activeLayer = lyr_Group1;
+            saveMask();
 
-            for (j = 0; j < lyr_Adj.layers.length; j++) {
-                var item = lyr_Adj.layers[j];
-                activeDocument.activeLayer = item;
-                if (enterMask()) {
-                    activeDocument.selection.selectAll();
-                    activeDocument.selection.copy();
-                    activeDocument.selection.deselect();
-                    exitMask();
-                    app.documents.add(activeDocument.width.value, activeDocument.height.value, activeDocument.resolution, activeDocument.name.substring(0, activeDocument.name.lastIndexOf(".")) + "_" + activeDocument.activeLayer.name.replace(/ /g, '-'), NewDocumentMode.RGB, DocumentFill.WHITE, 1)
-                    activeDocument.paste();
-                    activeDocument.flatten();
-                    var savedFile = saveAsJPG(dir_Masks, activeDocument.name);
-                    saveJPGs.push(savedFile);
-                    activeDocument.close(SaveOptions.DONOTSAVECHANGES);
-                };
+            for (j = 0; j < lyr_Group1.layerSets.length; j++) {
+                activeDocument.activeLayer = lyr_Group1.layerSets[j];
+                saveMask();
+                if (activeDocument.activeLayer.typename == "LayerSet" && activeDocument.activeLayer.name.toLowerCase() == "adj") {
+                    var lyr_Adj = activeDocument.activeLayer;
+                    for (k = 0; k < lyr_Adj.layerSets.length; k++) {
+                        activeDocument.activeLayer = lyr_Adj.layerSets[k];
+                        saveMask();
+                    }
+                }
             }
 
             processedFiles++;
-            activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+            if (!bridgeRun) activeDocument.close(SaveOptions.DONOTSAVECHANGES);
 
         } catch(e) {
             errorLog.push(activeDocument.name + " @ " + e.line + ": " + e.message);
-            activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+            if (!bridgeRun) activeDocument.close(SaveOptions.DONOTSAVECHANGES);
         }
         
     }
@@ -113,14 +101,33 @@ function main() {
     var d = new Date();
     var timeEnd = d.getTime() / 1000;
     var timeFull = timeEnd - timeStart;
-    if (errorLog.length != 1) {
-        var date = d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate() + " " + d.getHours() + ":" + d.getMinutes();
-        saveTxt(date + "\n" + processedFiles + " files processed\n\n" + errorLog.join("\n---\n"), "ERRORLOG", scriptFolder, ".txt");
-        alert(processedFiles + " files processed!\nSaved to: " + dir_Masks + "\nTime elapsed " + formatSeconds(timeFull) + "\n\n" + errorLog.join("\n"));
-    } else {
-        alert(processedFiles + " files processed!\nSaved to: " + dir_Masks + "\nTime elapsed " + formatSeconds(timeFull));
+    if (bridgeRun) {
+        if (errorLog.length != 1) {
+            var date = d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate() + " " + d.getHours() + ":" + d.getMinutes();
+            saveTxt(date + "\n" + processedFiles + " files processed\n\n" + errorLog.join("\n---\n"), "ERRORLOG", scriptFolder, ".txt");
+            alert(processedFiles + " files processed!\nSaved to: " + dir_Masks + "\nTime elapsed " + formatSeconds(timeFull) + "\n\n" + errorLog.join("\n"));
+        } else {
+            alert(processedFiles + " files processed!\nSaved to: " + dir_Masks + "\nTime elapsed " + formatSeconds(timeFull));
+        }
     }
 
+}
+
+function saveMask() {
+    if (activeDocument.activeLayer.typename != "LayerSet") return;
+    if (enterMask()) {
+        activeDocument.selection.selectAll();
+        activeDocument.selection.copy();
+        activeDocument.selection.deselect();
+        exitMask();
+        app.documents.add(activeDocument.width.value, activeDocument.height.value, activeDocument.resolution, activeDocument.name.substring(0, activeDocument.name.lastIndexOf(".")) + "_"  + groupOrder + "_" + activeDocument.activeLayer.name.replace(/ /g, '-'), NewDocumentMode.RGB, DocumentFill.WHITE, 1)
+        activeDocument.paste();
+        activeDocument.flatten();
+        var savedFile = saveAsJPG(dir_Masks, activeDocument.name);
+        groupOrder++;
+        saveJPGs.push(savedFile);
+        activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+    };
 }
 
 function GetFilesFromBridge() {
